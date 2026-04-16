@@ -111,12 +111,9 @@ class DashboardPanel(QWidget):
                       DANGER if stats['low_stock_count'] else SUCCESS),
             stat_card("Expiring Soon",  str(stats['expiring_soon']),
                       WARNING if stats['expiring_soon'] else SUCCESS),
-            stat_card("COGS (30 days)", f"${stats['cogs_30d']:,.2f}",  INFO,
-                      "Cost of goods purchased"),
-            stat_card("Waste (30 days)",f"${stats['waste_cost_30d']:,.2f}",
-                      WARNING, "Estimated waste cost"),
-            stat_card("Sales Today",    str(stats['sales_today']),   SUCCESS,
-                      "Menu items sold"),
+            stat_card("COGS (30 days)", f"${stats['cogs_30d']:,.2f}",  INFO),
+            stat_card("Waste (30 days)",f"${stats['waste_cost_30d']:,.2f}", WARNING),
+            stat_card("Sales Today",    str(stats['sales_today']),   SUCCESS),
         ]
         for i, card in enumerate(cards):
             self._stats_grid.addWidget(card, 0, i)
