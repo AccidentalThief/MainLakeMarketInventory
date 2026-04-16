@@ -220,6 +220,10 @@ def empty_state(icon: str, message: str, sub: str = "") -> QWidget:
 
 def page_header(title: str, subtitle: str = "", actions: list = None) -> QWidget:
     w = QWidget()
+    
+    # Force the header to stay compact vertically
+    w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    
     row = QHBoxLayout(w)
     row.setContentsMargins(0, 0, 0, 0)
 

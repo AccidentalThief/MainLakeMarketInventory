@@ -271,6 +271,7 @@ QLabel#StatValue {{
     color: {TEXT_PRIMARY};
 }}
 QLabel#StatLabel {{
+    background-color: transparent;
     font-size: {FONT_SIZE_SM}pt;
     color: {TEXT_SECOND};
     text-transform: uppercase;
