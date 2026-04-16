@@ -221,8 +221,12 @@ class SaleDialog(QDialog):
 
     def _validate_and_accept(self):
         if not self._menu_item.currentData():
-            QMessageBox.warning(self, "Validation", "Please select a menu item.")
+            QMessageBox.warning(self, "Missing Info", "Please select a menu item.")
             return
+        if not self._logged_by.text().strip():
+            QMessageBox.warning(self, "Missing Info", "Please enter your name in 'Logged By'.")
+            return
+            
         self.accept()
 
     def get_data(self) -> dict:

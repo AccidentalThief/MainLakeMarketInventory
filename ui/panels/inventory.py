@@ -241,7 +241,7 @@ class ItemDialog(QDialog):
 
         # --- NEW: Initial Stock Field ---
         self._current_qty = QDoubleSpinBox()
-        self._current_qty.setDecimals(3)
+        self._current_qty.setDecimals(2)
         self._current_qty.setRange(0, 99999)
         
         # If editing an existing item, lock this field to protect data integrity
@@ -269,6 +269,15 @@ class ItemDialog(QDialog):
         self._par.setRange(0, 99999)
         self._par.setSuffix("  (target restock amount)")
         form.addRow("Par Level:", self._par)
+
+        self._supplier = QLineEdit()
+        self._supplier.setPlaceholderText("Supplier name or contact")
+        form.addRow("Supplier:", self._supplier)
+
+        self._notes = QTextEdit()
+        self._notes.setMaximumHeight(72)
+        self._notes.setPlaceholderText("Optional notes…")
+        form.addRow("Notes:", self._notes)
 
         layout.addLayout(form)
 
@@ -303,13 +312,16 @@ class ItemDialog(QDialog):
 
     def _validate_and_accept(self):
         if not self._name.text().strip():
-            QMessageBox.warning(self, "Validation", "Item name is required.")
+            QMessageBox.warning(self, "Missing Info", "Please enter an item name.")
             return
+        if not self._category.currentData():
+            QMessageBox.warning(self, "Missing Info", "Please select a category.")
+            return
+        if not self._unit.currentData():
+            QMessageBox.warning(self, "Missing Info", "Please select a unit of measurement.")
+            return
+            
         self.accept()
-
-        if not self._supplier.text().strip():
-            QMessageBox.warning(self, "Missing Info", "Please enter a supplier.")
-            return
 
     def get_data(self) -> dict:
         return {

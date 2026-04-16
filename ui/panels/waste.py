@@ -265,8 +265,12 @@ class WasteDialog(QDialog):
 
     def _validate_and_accept(self):
         if not self._item.currentData():
-            QMessageBox.warning(self, "Validation", "Please select an item.")
+            QMessageBox.warning(self, "Missing Info", "Please select an item.")
             return
+        if not self._logged_by.text().strip():
+            QMessageBox.warning(self, "Missing Info", "Please enter your name in 'Logged By'.")
+            return
+            
         self.accept()
 
     def get_data(self) -> dict:

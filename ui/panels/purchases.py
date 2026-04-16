@@ -265,11 +265,18 @@ class PurchaseDialog(QDialog):
 
     def _validate_and_accept(self):
         if not self._item.currentData():
-            QMessageBox.warning(self, "Validation", "Please select an item.")
+            QMessageBox.warning(self, "Missing Info", "Please select an item.")
             return
         if self._qty.value() <= 0:
-            QMessageBox.warning(self, "Validation", "Quantity must be > 0.")
+            QMessageBox.warning(self, "Invalid Quantity", "Quantity must be greater than 0.")
             return
+        if self._unit_cost.value() < 0:
+            QMessageBox.warning(self, "Invalid Cost", "Unit cost cannot be negative.")
+            return
+        if not self._received_by.text().strip():
+            QMessageBox.warning(self, "Missing Info", "Please enter your name in 'Received By'.")
+            return
+            
         self.accept()
 
     def get_data(self) -> dict:
