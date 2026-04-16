@@ -168,7 +168,11 @@ class InventoryPanel(QWidget):
                 db.add_item(**data)
                 self.refresh()
             except Exception as e:
-                QMessageBox.critical(self, "Error", str(e))
+                # Catch the specific SQLite duplicate error
+                if "UNIQUE constraint failed" in str(e):
+                    QMessageBox.warning(self, "Duplicate Item", f"An item named '{data['name']}' already exists!")
+                else:
+                    QMessageBox.critical(self, "Error", f"Database error: {str(e)}")
 
     def _on_edit_item(self, item: dict):
         dlg = ItemDialog(item=item, parent=self)
@@ -302,6 +306,10 @@ class ItemDialog(QDialog):
             QMessageBox.warning(self, "Validation", "Item name is required.")
             return
         self.accept()
+
+        if not self._supplier.text().strip():
+            QMessageBox.warning(self, "Missing Info", "Please enter a supplier.")
+            return
 
     def get_data(self) -> dict:
         return {
