@@ -1,6 +1,6 @@
 """
 ui/panels/recipes.py
-Manage menu items and their recipe ingredients.
+Manage menu items, combos, and their recipe ingredients.
 """
 
 from PyQt6.QtWidgets import (
@@ -13,9 +13,8 @@ from PyQt6.QtCore import Qt
 import db.database as db
 from ui.widgets import (
     primary_btn, secondary_btn, icon_btn, make_table,
-    table_item, centered_item, page_header, section_title, hdivider, muted
+    table_item, centered_item, page_header, section_title, hdivider
 )
-
 
 class RecipesPanel(QWidget):
 
@@ -32,8 +31,8 @@ class RecipesPanel(QWidget):
         root.setSpacing(16)
 
         root.addWidget(page_header(
-            "⚙  Manage Recipes",
-            "Configure the ingredients for each menu item."
+            "⚙  Menu & Recipes",
+            "Configure the ingredients for each sandwich or combo."
         ))
         root.addWidget(hdivider())
 
@@ -47,12 +46,12 @@ class RecipesPanel(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(8)
 
-        add_mi_btn = primary_btn("+ New Menu Item")
+        add_mi_btn = primary_btn("+ New Menu Item or Combo")
         add_mi_btn.clicked.connect(self._on_add_menu_item)
         left_layout.addWidget(add_mi_btn)
 
         self._mi_list = make_table(["Name", "Category"])
-        self._mi_list.setMaximumWidth(280)
+        self._mi_list.setMaximumWidth(320)
         self._mi_list.horizontalHeader().setStretchLastSection(True)
         self._mi_list.setSelectionMode(self._mi_list.SelectionMode.SingleSelection)
         self._mi_list.itemSelectionChanged.connect(self._on_mi_selected)
@@ -97,17 +96,15 @@ class RecipesPanel(QWidget):
         right_layout.addWidget(save_btn)
 
         splitter.addWidget(right)
-        splitter.setSizes([260, 400])
+        splitter.setSizes([300, 400])
         root.addWidget(splitter)
 
     def refresh(self):
-        # Refresh ingredient dropdown
         self._items_data = db.get_all_items()
         self._ing_combo.clear()
-        self._ing_combo.addItem("— Select Ingredient —", None)
+        self._ing_combo.addItem("— Select Ingredient / Item —", None)
         for it in self._items_data:
             self._ing_combo.addItem(f"{it['name']} ({it['unit_abbr']})", it['id'])
-        
         self._load_menu_items()
 
     def _load_menu_items(self):
@@ -128,12 +125,13 @@ class RecipesPanel(QWidget):
         mi = self._menu_items_data[r]
         self._current_mi_id = mi['id']
         self._recipe_title.setText(f"Recipe: {mi['name']}")
+        
         recipe = db.get_recipe(mi['id'])
         self._recipe_rows = [
             {'item_id': ing['item_id'],
              'quantity': ing['quantity'],
              'name': ing['ingredient_name'],
-             'unit': ing['unit_abbr']}
+             'unit': ing['unit_abbr']} 
             for ing in recipe
         ]
         self._refresh_recipe_table()
@@ -159,7 +157,7 @@ class RecipesPanel(QWidget):
         item = next((i for i in self._items_data if i['id'] == item_id), None)
         if not item:
             return
-        # Check duplicate
+            
         existing = next((r for r in self._recipe_rows if r['item_id'] == item_id), None)
         if existing:
             existing['quantity'] = qty
@@ -181,15 +179,16 @@ class RecipesPanel(QWidget):
         if not self._current_mi_id:
             QMessageBox.warning(self, "Warning", "No menu item selected.")
             return
+            
         db.save_recipe(self._current_mi_id, self._recipe_rows)
         QMessageBox.information(self, "Saved", "Recipe saved successfully.")
 
     def _on_add_menu_item(self):
         dlg = AddMenuItemDialog(parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            name, cat = dlg.get_data()
+            data = dlg.get_data()
             try:
-                db.add_menu_item(name, cat)
+                db.add_menu_item(**data)
                 self._load_menu_items()
             except Exception as e:
                 QMessageBox.critical(self, "Error", str(e))
@@ -198,30 +197,39 @@ class RecipesPanel(QWidget):
 class AddMenuItemDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Add Menu Item")
+        self.setWindowTitle("Add Menu Item or Combo")
         self.setMinimumWidth(340)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(10)
-        layout.addWidget(QLabel("New Menu Item"))
+        layout.addWidget(QLabel("New Menu Item / Combo"))
 
         form = QFormLayout()
         self._name = QLineEdit()
-        self._name.setPlaceholderText("e.g. Turkey Club")
+        self._name.setPlaceholderText("e.g. Turkey Club Combo")
         form.addRow("Name *:", self._name)
 
         self._cat = QComboBox()
-        self._cat.addItems(["Sandwich","Hot Sandwich","Ice Cream","Specialty","Other"])
+        # --- NEW: Added "Combo" to the dropdown! ---
+        self._cat.addItems(["Sandwich","Hot Sandwich","Combo","Ice Cream","Specialty","Other"])
         form.addRow("Category:", self._cat)
+        
         layout.addLayout(form)
 
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok |
-            QDialogButtonBox.StandardButton.Cancel
-        )
-        btns.accepted.connect(self.accept)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self._validate_and_accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
 
+    def _validate_and_accept(self):
+        if not self._name.text().strip():
+            QMessageBox.warning(self, "Missing Info", "Please enter a name.")
+            return
+        self.accept()
+
     def get_data(self):
-        return self._name.text().strip(), self._cat.currentText()
+        return {
+            'name': self._name.text().strip(), 
+            'category': self._cat.currentText(),
+            'price': 0.0 # Default price, configured in the Prices panel!
+        }

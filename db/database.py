@@ -23,24 +23,31 @@ def get_connection() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL")
     return conn
 
-
 def initialize_database():
     """Create tables and seed data if the database doesn't exist yet."""
     conn = get_connection()
     with open(SCHEMA_SQL, "r") as f:
         conn.executescript(f.read())
         
-    # --- SCHEMA PATCH FOR DIRECT ITEM SALES ---
-    # Automatically upgrades existing databases to support standalone sales
+    # --- SCHEMA PATCH FOR LIVE COGS TRACKING ---
     try:
+        conn.execute("ALTER TABLE items ADD COLUMN unit_cost REAL NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE sales_log ADD COLUMN cogs REAL NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE sales_log ADD COLUMN item_id INTEGER REFERENCES items(id)")
     except sqlite3.OperationalError:
-        pass  # Column already exists, safe to ignore!
-    # ------------------------------------------
+        pass  
+
+    # --- NEW: SCHEMA PATCH FOR SELLING PRICES & REVENUE ---
+    try:
+        conn.execute("ALTER TABLE menu_items ADD COLUMN price REAL NOT NULL DEFAULT 0.0")
+        conn.execute("ALTER TABLE items ADD COLUMN selling_price REAL NOT NULL DEFAULT 0.0")
+        conn.execute("ALTER TABLE sales_log ADD COLUMN revenue REAL NOT NULL DEFAULT 0.0")
+    except sqlite3.OperationalError:
+        pass  
+    # ------------------------------------------------------
     
     conn.commit()
     conn.close()
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CATEGORIES
@@ -196,6 +203,10 @@ def log_purchase(item_id, quantity, unit_cost, invoice_number=None,
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (item_id, quantity, unit_cost, invoice_number,
               supplier, received_by, notes))
+        
+        # --- NEW: Update the item's current rolling unit cost ---
+        conn.execute("UPDATE items SET unit_cost = ? WHERE id = ?", (unit_cost, item_id))
+        
         adjust_item_quantity(conn, item_id, quantity)
         if expiration_date:
             conn.execute("""
@@ -210,25 +221,41 @@ def log_purchase(item_id, quantity, unit_cost, invoice_number=None,
         conn.close()
 
 
-def get_purchase_history(item_id=None, limit=200):
+def get_purchase_history(days=None, limit=500):
+    """Fetch the history of incoming purchases with item and unit names."""
     conn = get_connection()
-    if item_id:
-        rows = conn.execute("""
-            SELECT p.*, i.name AS item_name, u.abbreviation AS unit_abbr
-            FROM   purchases p
-            JOIN   items i ON p.item_id = i.id
-            JOIN   units u ON i.unit_id = u.id
-            WHERE  p.item_id = ?
-            ORDER  BY p.purchased_at DESC LIMIT ?
-        """, (item_id, limit)).fetchall()
-    else:
-        rows = conn.execute("""
-            SELECT p.*, i.name AS item_name, u.abbreviation AS unit_abbr
-            FROM   purchases p
-            JOIN   items i ON p.item_id = i.id
-            JOIN   units u ON i.unit_id = u.id
-            ORDER  BY p.purchased_at DESC LIMIT ?
-        """, (limit,)).fetchall()
+    
+    query = """
+        SELECT p.*, i.name AS item_name, u.abbreviation AS unit_abbr
+        FROM purchases p
+        JOIN items i ON p.item_id = i.id
+        JOIN units u ON i.unit_id = u.id
+    """
+    params = []
+    
+    if days is not None:
+        query += " WHERE p.purchased_at >= datetime('now', ? || ' days')"
+        params.append(f"-{days}")
+        
+    query += " ORDER BY p.purchased_at DESC LIMIT ?"
+    params.append(limit)
+    
+    rows = conn.execute(query, tuple(params)).fetchall()
+    conn.close()
+    
+    return [dict(r) for r in rows]
+
+
+def get_recipe(menu_item_id: int):
+    conn = get_connection()
+    # NEW: Now fetching the current unit_cost of the ingredients
+    rows = conn.execute("""
+        SELECT ri.*, i.name AS ingredient_name, u.abbreviation AS unit_abbr, i.unit_cost
+        FROM   recipe_ingredients ri
+        JOIN   items i ON ri.item_id = i.id
+        JOIN   units u ON i.unit_id  = u.id
+        WHERE  ri.menu_item_id = ?
+    """, (menu_item_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -279,12 +306,30 @@ def get_recipe(menu_item_id: int):
     return [dict(r) for r in rows]
 
 
-def add_menu_item(name, category="Sandwich", description=None):
+def add_menu_item(name, category, price=0.0):
     conn = get_connection()
-    conn.execute(
-        "INSERT INTO menu_items (name, category, description) VALUES (?, ?, ?)",
-        (name, category, description)
-    )
+    conn.execute("INSERT INTO menu_items (name, category, price) VALUES (?, ?, ?)", (name, category, price))
+    conn.commit()
+    conn.close()
+
+
+def update_menu_item_price(mi_id: int, price: float):
+    conn = get_connection()
+    conn.execute("UPDATE menu_items SET price = ? WHERE id = ?", (price, mi_id))
+    conn.commit()
+    conn.close()
+
+
+def update_item_selling_price(item_id: int, price: float):
+    conn = get_connection()
+    conn.execute("UPDATE items SET selling_price = ? WHERE id = ?", (price, item_id))
+    conn.commit()
+    conn.close()
+
+
+def update_item_unit_cost(item_id: int, cost: float):
+    conn = get_connection()
+    conn.execute("UPDATE items SET unit_cost = ? WHERE id = ?", (cost, item_id))
     conn.commit()
     conn.close()
 
@@ -308,28 +353,54 @@ def save_recipe(menu_item_id: int, ingredients: list[dict]):
 
 def log_sale(menu_item_id: int = None, item_id: int = None, quantity_sold: int = 1,
              logged_by: str = None, notes: str = None):
-    """Record a sale and deduct ingredients or standalone items from inventory."""
+    """Record a sale, calculate COGS & REVENUE, and deduct inventory."""
     if not menu_item_id and not item_id:
         raise ValueError("Must select an item to sell.")
         
     conn = get_connection()
     try:
+        cogs = 0
+        revenue = 0
+        
         if menu_item_id:
-            recipe = get_recipe(menu_item_id)
+            recipe = conn.execute("""
+                SELECT ri.*, i.unit_cost 
+                FROM recipe_ingredients ri
+                JOIN items i ON ri.item_id = i.id
+                WHERE ri.menu_item_id = ?
+            """, (menu_item_id,)).fetchall()
+            
             if not recipe:
                 raise ValueError("No recipe found for this menu item.")
-            conn.execute("""
-                INSERT INTO sales_log (menu_item_id, quantity_sold, logged_by, notes)
-                VALUES (?, ?, ?, ?)
-            """, (menu_item_id, quantity_sold, logged_by, notes))
-            for ing in recipe:
-                adjust_item_quantity(conn, ing['item_id'], -(ing['quantity'] * quantity_sold))
                 
-        elif item_id:
+            for ing in recipe:
+                cost = ing['unit_cost'] or 0
+                cogs += (cost * ing['quantity'] * quantity_sold)
+                adjust_item_quantity(conn, ing['item_id'], -(ing['quantity'] * quantity_sold))
+            
+            # Fetch the Selling Price for Revenue Calculation
+            mi = conn.execute("SELECT price FROM menu_items WHERE id = ?", (menu_item_id,)).fetchone()
+            if mi:
+                revenue = (mi['price'] or 0) * quantity_sold
+                
             conn.execute("""
-                INSERT INTO sales_log (item_id, quantity_sold, logged_by, notes)
-                VALUES (?, ?, ?, ?)
-            """, (item_id, quantity_sold, logged_by, notes))
+                INSERT INTO sales_log (menu_item_id, quantity_sold, logged_by, notes, cogs, revenue)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (menu_item_id, quantity_sold, logged_by, notes, cogs, revenue))
+            
+        elif item_id:
+            # Fetch both Cost and Selling Price for standalone items
+            row = conn.execute("SELECT unit_cost, selling_price FROM items WHERE id = ?", (item_id,)).fetchone()
+            cost = row['unit_cost'] if row else 0
+            price = row['selling_price'] if row else 0
+            
+            cogs = cost * quantity_sold
+            revenue = price * quantity_sold
+            
+            conn.execute("""
+                INSERT INTO sales_log (item_id, quantity_sold, logged_by, notes, cogs, revenue)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (item_id, quantity_sold, logged_by, notes, cogs, revenue))
             adjust_item_quantity(conn, item_id, -quantity_sold)
             
         conn.commit()
@@ -454,20 +525,20 @@ def get_dashboard_stats():
     conn = get_connection()
     stats = {}
 
-    stats['total_items'] = conn.execute(
-        "SELECT COUNT(*) FROM items WHERE is_active=1").fetchone()[0]
-    stats['low_stock_count'] = conn.execute(
-        "SELECT COUNT(*) FROM items WHERE is_active=1 AND current_quantity<=min_threshold"
-    ).fetchone()[0]
+    stats['total_items'] = conn.execute("SELECT COUNT(*) FROM items WHERE is_active=1").fetchone()[0]
+    stats['low_stock_count'] = conn.execute("SELECT COUNT(*) FROM items WHERE is_active=1 AND current_quantity<=min_threshold").fetchone()[0]
     stats['expiring_soon'] = conn.execute("""
         SELECT COUNT(*) FROM item_expiration_lots
         WHERE  is_depleted=0 AND expiration_date IS NOT NULL
           AND  date(expiration_date) <= date('now','+7 days')
     """).fetchone()[0]
+    
+    # --- NEW: COGS is now pulled from actual SALES, not purchases! ---
     stats['cogs_30d'] = conn.execute("""
-        SELECT COALESCE(SUM(total_cost),0) FROM purchases
-        WHERE  purchased_at >= datetime('now','-30 days')
+        SELECT COALESCE(SUM(cogs),0) FROM sales_log
+        WHERE  sold_at >= datetime('now','-30 days')
     """).fetchone()[0]
+    
     stats['waste_cost_30d'] = conn.execute("""
         SELECT COALESCE(SUM(estimated_cost),0) FROM waste_log
         WHERE  wasted_at >= datetime('now','-30 days')

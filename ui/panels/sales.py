@@ -66,13 +66,14 @@ class SalesPanel(QWidget):
         row.addStretch()
         root.addLayout(row)
 
-        cols = ["Date/Time", "Item Sold", "Category", "Qty Sold",
-                "Logged By", "Notes"]
+        # Added Revenue Column
+        cols = ["Date/Time", "Item Sold", "Qty", "COGS", "Revenue", "Logged By"]
         self._table = make_table(cols)
         self._table.setColumnWidth(0, 150)
         self._table.setColumnWidth(1, 200)
-        self._table.setColumnWidth(2, 110)
-        self._table.setColumnWidth(3, 80)
+        self._table.setColumnWidth(2, 60)
+        self._table.setColumnWidth(3, 90) # COGS
+        self._table.setColumnWidth(4, 90) # Revenue
         root.addWidget(self._table)
 
     def refresh(self):
@@ -88,13 +89,20 @@ class SalesPanel(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-        total_items  = sum(s['quantity_sold'] for s in self._sales)
-        unique_items = len({s['menu_item_name'] for s in self._sales if s['menu_item_name']})
+        total_items = sum(s['quantity_sold'] for s in self._sales)
+        total_cogs  = sum(s.get('cogs', 0) for s in self._sales)
+        total_rev   = sum(s.get('revenue', 0) for s in self._sales)
+        profit      = total_rev - total_cogs # Gross Profit!
 
         self._stats_row.addWidget(
             stat_card("Total Sold", str(total_items), ACCENT))
         self._stats_row.addWidget(
-            stat_card("Unique Items", str(unique_items), INFO))
+            stat_card("Total Revenue", f"${total_rev:,.2f}", SUCCESS))
+        self._stats_row.addWidget(
+            stat_card("Total COGS", f"${total_cogs:,.2f}", INFO)) 
+        self._stats_row.addWidget(
+            stat_card("Gross Profit", f"${profit:,.2f}", WARNING))
+            
         self._stats_row.addStretch()
 
     def _filter(self):
@@ -113,14 +121,21 @@ class SalesPanel(QWidget):
             tbl.setItem(r, 0, table_item(date_str))
             
             name_str = s['menu_item_name'] or "—"
-            if s.get('item_id'):  # Visual cue for standalone items
+            if s.get('item_id'):  
                 name_str = f"🛍️ {name_str}"
                 
             tbl.setItem(r, 1, table_item(name_str))
-            tbl.setItem(r, 2, table_item(s['category'] or "—"))
-            tbl.setItem(r, 3, centered_item(str(s['quantity_sold'])))
-            tbl.setItem(r, 4, table_item(s['logged_by'] or "—"))
-            tbl.setItem(r, 5, table_item(s['notes'] or "—"))
+            tbl.setItem(r, 2, centered_item(str(s['quantity_sold'])))
+            
+            cogs_item = centered_item(f"${s.get('cogs', 0):.2f}")
+            cogs_item.setForeground(QColor(INFO))
+            tbl.setItem(r, 3, cogs_item)
+            
+            rev_item = centered_item(f"${s.get('revenue', 0):.2f}")
+            rev_item.setForeground(QColor(SUCCESS))
+            tbl.setItem(r, 4, rev_item)
+            
+            tbl.setItem(r, 5, table_item(s['logged_by'] or "—"))
             tbl.setRowHeight(r, 36)
         tbl.setUpdatesEnabled(True)
 
@@ -133,7 +148,7 @@ class SalesPanel(QWidget):
                 self.refresh()
                 QMessageBox.information(
                     self, "Sale Logged",
-                    "Sale recorded and inventory updated."
+                    "Sale recorded, inventory updated, and revenue tracked."
                 )
             except ValueError as e:
                 QMessageBox.warning(self, "Validation Error", str(e))

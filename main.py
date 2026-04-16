@@ -29,6 +29,7 @@ from ui.panels.inventory import InventoryPanel
 from ui.panels.purchases import PurchasesPanel
 from ui.panels.sales     import SalesPanel
 from ui.panels.recipes   import RecipesPanel
+from ui.panels.prices    import PricesPanel
 from ui.panels.waste     import WastePanel
 from ui.panels.history   import HistoryPanel
 from ui.panels.admin     import AdminPanel
@@ -68,9 +69,10 @@ class MainWindow(QMainWindow):
         ("🛒", "Purchases",   2),
         ("🥪", "Sales",       3),
         ("⚙️", "Recipes",     4),
-        ("🗑", "Waste Log",    5),
-        ("📋", "History",     6),
-        ("🛡️", "Admin",       7),
+        ("💲", "Set Prices",  5),
+        ("🗑", "Waste Log",    6),
+        ("📋", "History",     7),
+        ("🛡️", "Admin",       8),
     ]
 
     def __init__(self):
@@ -108,6 +110,7 @@ class MainWindow(QMainWindow):
             PurchasesPanel(),
             SalesPanel(),
             RecipesPanel(),
+            PricesPanel(),
             WastePanel(),
             HistoryPanel(),
             AdminPanel(),
