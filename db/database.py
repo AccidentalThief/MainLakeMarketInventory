@@ -456,3 +456,67 @@ def get_dashboard_stats():
 
     conn.close()
     return stats
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ADMIN & SYSTEM CONTROLS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def verify_admin(password: str) -> bool:
+    """Creates a settings table if missing, and verifies the admin password."""
+    conn = get_connection()
+    conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('admin_pass', 'admin123')")
+    conn.commit()
+    row = conn.execute("SELECT value FROM app_settings WHERE key = 'admin_pass'").fetchone()
+    conn.close()
+    return row['value'] == password
+
+def change_admin_password(new_pass: str):
+    conn = get_connection()
+    conn.execute("UPDATE app_settings SET value = ? WHERE key = 'admin_pass'", (new_pass,))
+    conn.commit()
+    conn.close()
+
+def undo_purchase(purchase_id: int):
+    """Deletes a purchase log and removes the items from inventory."""
+    conn = get_connection()
+    p = conn.execute("SELECT * FROM purchases WHERE id = ?", (purchase_id,)).fetchone()
+    if p:
+        adjust_item_quantity(conn, p['item_id'], -p['quantity'])
+        conn.execute("DELETE FROM purchases WHERE id = ?", (purchase_id,))
+        conn.commit()
+    conn.close()
+
+def undo_sale(sale_id: int):
+    """Deletes a sale log and adds the recipe ingredients back to inventory."""
+    conn = get_connection()
+    s = conn.execute("SELECT * FROM sales_log WHERE id = ?", (sale_id,)).fetchone()
+    if s:
+        recipe = conn.execute("SELECT * FROM recipe_ingredients WHERE menu_item_id = ?", (s['menu_item_id'],)).fetchall()
+        for ing in recipe:
+            adjust_item_quantity(conn, ing['item_id'], (ing['quantity'] * s['quantity_sold']))
+        conn.execute("DELETE FROM sales_log WHERE id = ?", (sale_id,))
+        conn.commit()
+    conn.close()
+
+def undo_waste(waste_id: int):
+    """Deletes a waste log and adds the items back to inventory."""
+    conn = get_connection()
+    w = conn.execute("SELECT * FROM waste_log WHERE id = ?", (waste_id,)).fetchone()
+    if w:
+        adjust_item_quantity(conn, w['item_id'], w['quantity'])
+        conn.execute("DELETE FROM waste_log WHERE id = ?", (waste_id,))
+        conn.commit()
+    conn.close()
+
+def factory_reset_database():
+    """WIPES ALL DATA. Resets everything except base categories and units."""
+    conn = get_connection()
+    tables = [
+        'purchases', 'sales_log', 'usage_log', 'waste_log', 
+        'item_expiration_lots', 'recipe_ingredients', 'menu_items', 'items'
+    ]
+    for t in tables:
+        conn.execute(f"DELETE FROM {t}")
+    conn.commit()
+    conn.close()

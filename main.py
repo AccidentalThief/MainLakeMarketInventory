@@ -31,6 +31,7 @@ from ui.panels.sales     import SalesPanel
 from ui.panels.recipes   import RecipesPanel
 from ui.panels.waste     import WastePanel
 from ui.panels.history   import HistoryPanel
+from ui.panels.admin     import AdminPanel
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -69,6 +70,7 @@ class MainWindow(QMainWindow):
         ("⚙️", "Recipes",     4),
         ("🗑", "Waste Log",    5),
         ("📋", "History",     6),
+        ("🛡️", "Admin",       7),
     ]
 
     def __init__(self):
@@ -108,6 +110,7 @@ class MainWindow(QMainWindow):
             RecipesPanel(),
             WastePanel(),
             HistoryPanel(),
+            AdminPanel(),
         ]
         for page in self._pages:
             self._stack.addWidget(page)
