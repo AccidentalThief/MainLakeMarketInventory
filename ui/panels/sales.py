@@ -1,13 +1,15 @@
 """
 ui/panels/sales.py
-Log sandwich / menu item sales → auto-deducts recipe ingredients.
+Log sandwich / menu item sales → auto-deducts recipe ingredients,
+or log direct sales of standalone retail items (drinks, chips, etc.).
 """
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QDialog, QFormLayout, QLineEdit, QComboBox, QSpinBox,
     QDialogButtonBox, QMessageBox, QTableWidgetItem,
-    QTextEdit, QScrollArea, QSplitter, QGroupBox
+    QTextEdit, QScrollArea, QSplitter, QGroupBox,
+    QRadioButton, QButtonGroup, QStackedWidget
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui  import QColor, QFont
@@ -38,7 +40,7 @@ class SalesPanel(QWidget):
 
         root.addWidget(page_header(
             "🥪  Sales & Usage",
-            "Log menu item sales — ingredients deducted automatically",
+            "Log sales of prepared recipes or standalone items",
             actions=[log_btn]
         ))
         root.addWidget(hdivider())
@@ -64,7 +66,7 @@ class SalesPanel(QWidget):
         row.addStretch()
         root.addLayout(row)
 
-        cols = ["Date/Time", "Menu Item", "Category", "Qty Sold",
+        cols = ["Date/Time", "Item Sold", "Category", "Qty Sold",
                 "Logged By", "Notes"]
         self._table = make_table(cols)
         self._table.setColumnWidth(0, 150)
@@ -87,18 +89,18 @@ class SalesPanel(QWidget):
                 item.widget().deleteLater()
 
         total_items  = sum(s['quantity_sold'] for s in self._sales)
-        unique_items = len({s['menu_item_id'] for s in self._sales})
+        unique_items = len({s['menu_item_name'] for s in self._sales if s['menu_item_name']})
 
         self._stats_row.addWidget(
             stat_card("Total Sold", str(total_items), ACCENT))
         self._stats_row.addWidget(
-            stat_card("Menu Items", str(unique_items), INFO))
+            stat_card("Unique Items", str(unique_items), INFO))
         self._stats_row.addStretch()
 
     def _filter(self):
         q = self._search.text().lower()
         rows = [s for s in self._sales
-                if q in s['menu_item_name'].lower()
+                if q in (s['menu_item_name'] or "").lower()
                 or q in (s['logged_by'] or "").lower()]
         self._populate_table(rows)
 
@@ -109,7 +111,12 @@ class SalesPanel(QWidget):
         for r, s in enumerate(rows):
             date_str = s['sold_at'][:16].replace('T', ' ')
             tbl.setItem(r, 0, table_item(date_str))
-            tbl.setItem(r, 1, table_item(s['menu_item_name']))
+            
+            name_str = s['menu_item_name'] or "—"
+            if s.get('item_id'):  # Visual cue for standalone items
+                name_str = f"🛍️ {name_str}"
+                
+            tbl.setItem(r, 1, table_item(name_str))
             tbl.setItem(r, 2, table_item(s['category'] or "—"))
             tbl.setItem(r, 3, centered_item(str(s['quantity_sold'])))
             tbl.setItem(r, 4, table_item(s['logged_by'] or "—"))
@@ -129,7 +136,7 @@ class SalesPanel(QWidget):
                     "Sale recorded and inventory updated."
                 )
             except ValueError as e:
-                QMessageBox.warning(self, "Recipe Missing", str(e))
+                QMessageBox.warning(self, "Validation Error", str(e))
             except Exception as e:
                 QMessageBox.critical(self, "Error", str(e))
 
@@ -141,7 +148,8 @@ class SaleDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Log Sale")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(460)
+        self._items_data = db.get_all_items()
         self._build_ui()
 
     def _build_ui(self):
@@ -149,53 +157,93 @@ class SaleDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(14)
 
-        lbl = QLabel("Log Menu Item Sale")
+        lbl = QLabel("Log Sale")
         lbl.setObjectName("H2")
         layout.addWidget(lbl)
 
-        sub = muted("Ingredients will be automatically deducted from inventory.")
+        sub = muted("Inventory will be automatically deducted based on the item type.")
         layout.addWidget(sub)
-
-        # Recipe preview
-        self._preview_frame = QFrame()
-        self._preview_frame.setObjectName("Card")
-        pv_layout = QVBoxLayout(self._preview_frame)
-        pv_layout.setContentsMargins(12, 10, 12, 10)
-        self._preview_label = QLabel("Select a menu item to preview ingredients")
-        self._preview_label.setObjectName("Muted")
-        self._preview_label.setWordWrap(True)
-        pv_layout.addWidget(self._preview_label)
-        layout.addWidget(self._preview_frame)
-
+        
+        # --- Type Selection ---
+        self._type_group = QButtonGroup(self)
+        row_radios = QHBoxLayout()
+        
+        self._radio_menu = QRadioButton("Prepared Recipe (Sandwiches)")
+        self._radio_inv = QRadioButton("Standalone Item (Drinks, Chips)")
+        self._radio_menu.setChecked(True)
+        
+        self._type_group.addButton(self._radio_menu)
+        self._type_group.addButton(self._radio_inv)
+        
+        row_radios.addWidget(self._radio_menu)
+        row_radios.addWidget(self._radio_inv)
+        layout.addLayout(row_radios)
+        
         layout.addWidget(hdivider())
 
-        form = QFormLayout()
-        form.setSpacing(10)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-
+        # --- Dynamic Stack ---
+        self._stack = QStackedWidget()
+        
+        # Page 0: Prepared Recipe 
+        page_menu = QWidget()
+        form_menu = QFormLayout(page_menu)
+        form_menu.setContentsMargins(0, 0, 0, 0)
+        form_menu.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        
         self._menu_item = QComboBox()
         self._menu_item.setMinimumWidth(260)
         self._menu_item.addItem("— Select Menu Item —", None)
         for mi in db.get_menu_items():
             self._menu_item.addItem(f"{mi['name']}  [{mi['category']}]", mi['id'])
         self._menu_item.currentIndexChanged.connect(self._update_preview)
-        form.addRow("Menu Item *:", self._menu_item)
+        form_menu.addRow("Menu Item *:", self._menu_item)
+        
+        self._preview_label = QLabel("Select a menu item to preview ingredients")
+        self._preview_label.setObjectName("Muted")
+        self._preview_label.setWordWrap(True)
+        form_menu.addRow("", self._preview_label)
+        
+        self._stack.addWidget(page_menu)
+        
+        # Page 1: Standalone Inventory Item
+        page_inv = QWidget()
+        form_inv = QFormLayout(page_inv)
+        form_inv.setContentsMargins(0, 0, 0, 0)
+        form_inv.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        
+        self._inv_item = QComboBox()
+        self._inv_item.setMinimumWidth(260)
+        self._inv_item.addItem("— Select Standalone Item —", None)
+        for it in self._items_data:
+            self._inv_item.addItem(f"{it['name']} ({it['unit_abbr']})  —  Stock: {it['current_quantity']:g}", it['id'])
+        form_inv.addRow("Inventory Item *:", self._inv_item)
+        
+        self._stack.addWidget(page_inv)
+        layout.addWidget(self._stack)
+
+        # Toggle connection
+        self._radio_menu.toggled.connect(self._on_type_changed)
+
+        # --- Common Fields ---
+        form_common = QFormLayout()
+        form_common.setContentsMargins(0, 0, 0, 0)
+        form_common.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         self._qty = QSpinBox()
-        self._qty.setRange(1, 999)
+        self._qty.setRange(1, 9999)
         self._qty.setValue(1)
-        form.addRow("Quantity *:", self._qty)
+        form_common.addRow("Quantity Sold *:", self._qty)
 
         self._logged_by = QLineEdit()
         self._logged_by.setPlaceholderText("Your name")
-        form.addRow("Logged By:", self._logged_by)
+        form_common.addRow("Logged By:", self._logged_by)
 
         self._notes = QTextEdit()
         self._notes.setMaximumHeight(60)
         self._notes.setPlaceholderText("Optional notes…")
-        form.addRow("Notes:", self._notes)
+        form_common.addRow("Notes:", self._notes)
 
-        layout.addLayout(form)
+        layout.addLayout(form_common)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok |
@@ -204,6 +252,12 @@ class SaleDialog(QDialog):
         btns.accepted.connect(self._validate_and_accept)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
+
+    def _on_type_changed(self):
+        if self._radio_menu.isChecked():
+            self._stack.setCurrentIndex(0)
+        else:
+            self._stack.setCurrentIndex(1)
 
     def _update_preview(self):
         mi_id = self._menu_item.currentData()
@@ -220,8 +274,11 @@ class SaleDialog(QDialog):
         self._preview_label.setText("\n".join(lines))
 
     def _validate_and_accept(self):
-        if not self._menu_item.currentData():
+        if self._radio_menu.isChecked() and not self._menu_item.currentData():
             QMessageBox.warning(self, "Missing Info", "Please select a menu item.")
+            return
+        if self._radio_inv.isChecked() and not self._inv_item.currentData():
+            QMessageBox.warning(self, "Missing Info", "Please select an inventory item.")
             return
         if not self._logged_by.text().strip():
             QMessageBox.warning(self, "Missing Info", "Please enter your name in 'Logged By'.")
@@ -231,9 +288,9 @@ class SaleDialog(QDialog):
 
     def get_data(self) -> dict:
         return {
-            'menu_item_id':  self._menu_item.currentData(),
+            'menu_item_id':  self._menu_item.currentData() if self._radio_menu.isChecked() else None,
+            'item_id':       self._inv_item.currentData() if self._radio_inv.isChecked() else None,
             'quantity_sold': self._qty.value(),
             'logged_by':     self._logged_by.text().strip() or None,
             'notes':         self._notes.toPlainText().strip() or None,
         }
-

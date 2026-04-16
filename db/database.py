@@ -29,6 +29,15 @@ def initialize_database():
     conn = get_connection()
     with open(SCHEMA_SQL, "r") as f:
         conn.executescript(f.read())
+        
+    # --- SCHEMA PATCH FOR DIRECT ITEM SALES ---
+    # Automatically upgrades existing databases to support standalone sales
+    try:
+        conn.execute("ALTER TABLE sales_log ADD COLUMN item_id INTEGER REFERENCES items(id)")
+    except sqlite3.OperationalError:
+        pass  # Column already exists, safe to ignore!
+    # ------------------------------------------
+    
     conn.commit()
     conn.close()
 
@@ -297,21 +306,32 @@ def save_recipe(menu_item_id: int, ingredients: list[dict]):
 #  SALES LOG
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def log_sale(menu_item_id: int, quantity_sold: int = 1,
+def log_sale(menu_item_id: int = None, item_id: int = None, quantity_sold: int = 1,
              logged_by: str = None, notes: str = None):
-    """Record a sale and deduct ingredients from inventory."""
-    recipe = get_recipe(menu_item_id)
-    if not recipe:
-        raise ValueError("No recipe found for this menu item.")
+    """Record a sale and deduct ingredients or standalone items from inventory."""
+    if not menu_item_id and not item_id:
+        raise ValueError("Must select an item to sell.")
+        
     conn = get_connection()
     try:
-        conn.execute("""
-            INSERT INTO sales_log (menu_item_id, quantity_sold, logged_by, notes)
-            VALUES (?, ?, ?, ?)
-        """, (menu_item_id, quantity_sold, logged_by, notes))
-        for ing in recipe:
-            adjust_item_quantity(conn, ing['item_id'],
-                                 -(ing['quantity'] * quantity_sold))
+        if menu_item_id:
+            recipe = get_recipe(menu_item_id)
+            if not recipe:
+                raise ValueError("No recipe found for this menu item.")
+            conn.execute("""
+                INSERT INTO sales_log (menu_item_id, quantity_sold, logged_by, notes)
+                VALUES (?, ?, ?, ?)
+            """, (menu_item_id, quantity_sold, logged_by, notes))
+            for ing in recipe:
+                adjust_item_quantity(conn, ing['item_id'], -(ing['quantity'] * quantity_sold))
+                
+        elif item_id:
+            conn.execute("""
+                INSERT INTO sales_log (item_id, quantity_sold, logged_by, notes)
+                VALUES (?, ?, ?, ?)
+            """, (item_id, quantity_sold, logged_by, notes))
+            adjust_item_quantity(conn, item_id, -quantity_sold)
+            
         conn.commit()
     except Exception:
         conn.rollback()
@@ -323,15 +343,18 @@ def log_sale(menu_item_id: int, quantity_sold: int = 1,
 def get_sales_history(days=30, limit=500):
     conn = get_connection()
     rows = conn.execute("""
-        SELECT sl.*, m.name AS menu_item_name, m.category
+        SELECT sl.*, 
+               COALESCE(m.name, i.name) AS menu_item_name, 
+               COALESCE(m.category, c.name) AS category
         FROM   sales_log sl
-        JOIN   menu_items m ON sl.menu_item_id = m.id
+        LEFT JOIN menu_items m ON sl.menu_item_id = m.id
+        LEFT JOIN items i ON sl.item_id = i.id
+        LEFT JOIN categories c ON i.category_id = c.id
         WHERE  sl.sold_at >= datetime('now', ? || ' days')
         ORDER  BY sl.sold_at DESC LIMIT ?
     """, (f"-{days}", limit)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  MANUAL USAGE LOG
@@ -488,13 +511,17 @@ def undo_purchase(purchase_id: int):
     conn.close()
 
 def undo_sale(sale_id: int):
-    """Deletes a sale log and adds the recipe ingredients back to inventory."""
+    """Deletes a sale log and adds the items back to inventory."""
     conn = get_connection()
     s = conn.execute("SELECT * FROM sales_log WHERE id = ?", (sale_id,)).fetchone()
     if s:
-        recipe = conn.execute("SELECT * FROM recipe_ingredients WHERE menu_item_id = ?", (s['menu_item_id'],)).fetchall()
-        for ing in recipe:
-            adjust_item_quantity(conn, ing['item_id'], (ing['quantity'] * s['quantity_sold']))
+        if s['menu_item_id']:
+            recipe = conn.execute("SELECT * FROM recipe_ingredients WHERE menu_item_id = ?", (s['menu_item_id'],)).fetchall()
+            for ing in recipe:
+                adjust_item_quantity(conn, ing['item_id'], (ing['quantity'] * s['quantity_sold']))
+        elif s.keys() and 'item_id' in s.keys() and s['item_id']:
+            adjust_item_quantity(conn, s['item_id'], s['quantity_sold'])
+            
         conn.execute("DELETE FROM sales_log WHERE id = ?", (sale_id,))
         conn.commit()
     conn.close()
