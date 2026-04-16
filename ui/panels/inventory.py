@@ -235,6 +235,20 @@ class ItemDialog(QDialog):
             self._unit.addItem(f"{u['name']} ({u['abbreviation']})", u['id'])
         form.addRow("Unit *:", self._unit)
 
+        # --- NEW: Initial Stock Field ---
+        self._current_qty = QDoubleSpinBox()
+        self._current_qty.setDecimals(3)
+        self._current_qty.setRange(0, 99999)
+        
+        # If editing an existing item, lock this field to protect data integrity
+        if self._item:
+            self._current_qty.setEnabled(False)
+            self._current_qty.setToolTip("To adjust existing stock, use the Purchases or Waste logs.")
+            form.addRow("Current Stock:", self._current_qty)
+        else:
+            form.addRow("Initial Stock:", self._current_qty)
+        # --------------------------------
+
         self._threshold = QDoubleSpinBox()
         self._threshold.setDecimals(2)
         self._threshold.setRange(0, 99999)
@@ -249,16 +263,8 @@ class ItemDialog(QDialog):
         self._par = QDoubleSpinBox()
         self._par.setDecimals(2)
         self._par.setRange(0, 99999)
+        self._par.setSuffix("  (target restock amount)")
         form.addRow("Par Level:", self._par)
-
-        self._supplier = QLineEdit()
-        self._supplier.setPlaceholderText("Supplier name or contact")
-        form.addRow("Supplier:", self._supplier)
-
-        self._notes = QTextEdit()
-        self._notes.setMaximumHeight(72)
-        self._notes.setPlaceholderText("Optional notes…")
-        form.addRow("Notes:", self._notes)
 
         layout.addLayout(form)
 
@@ -272,6 +278,7 @@ class ItemDialog(QDialog):
 
     def _populate(self, item: dict):
         self._name.setText(item['name'])
+        self._current_qty.setValue(item.get('current_quantity', 0))
         self._threshold.setValue(item['min_threshold'])
         self._reorder.setValue(item['reorder_quantity'] or 0)
         self._par.setValue(item['par_level'] or 0)
@@ -301,6 +308,7 @@ class ItemDialog(QDialog):
             'name':            self._name.text().strip(),
             'category_id':     self._category.currentData(),
             'unit_id':         self._unit.currentData(),
+            'current_quantity':self._current_qty.value(),
             'min_threshold':   self._threshold.value(),
             'reorder_quantity':self._reorder.value() or None,
             'par_level':       self._par.value() or None,

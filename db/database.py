@@ -104,14 +104,14 @@ def get_low_stock_items():
     return [dict(r) for r in rows]
 
 
-def add_item(name, category_id, unit_id, min_threshold=0,
+def add_item(name, category_id, unit_id, current_quantity=0, min_threshold=0,
              reorder_quantity=None, par_level=None, supplier=None, notes=None):
     conn = get_connection()
     conn.execute("""
-        INSERT INTO items (name, category_id, unit_id, min_threshold,
+        INSERT INTO items (name, category_id, unit_id, current_quantity, min_threshold,
                            reorder_quantity, par_level, supplier, notes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (name, category_id, unit_id, min_threshold,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (name, category_id, unit_id, current_quantity, min_threshold,
           reorder_quantity, par_level, supplier, notes))
     conn.commit()
     conn.close()
