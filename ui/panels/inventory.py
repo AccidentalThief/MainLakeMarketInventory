@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QDialog, QFormLayout, QLineEdit, QComboBox, QDoubleSpinBox,
     QDialogButtonBox, QMessageBox, QTableWidgetItem, QSpinBox,
-    QCheckBox, QDateEdit, QTextEdit, QScrollArea
+    QCheckBox, QDateEdit, QTextEdit, QScrollArea, QHeaderView
 )
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui  import QColor, QFont
@@ -71,14 +71,21 @@ class InventoryPanel(QWidget):
         cols = ["Item Name", "Category", "Stock", "Unit",
                 "Threshold", "Supplier", "Actions"]
         self._table = make_table(cols)
-        self._table.horizontalHeader().setStretchLastSection(False)
-        self._table.setColumnWidth(0, 200)
-        self._table.setColumnWidth(1, 130)
-        self._table.setColumnWidth(2, 110)
-        self._table.setColumnWidth(3, 80)
-        self._table.setColumnWidth(4, 90)
-        self._table.setColumnWidth(5, 130)
-        self._table.setColumnWidth(6, 120)
+        
+        # Take control of the column widths and stretching
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # 'Item Name' stretches to fill empty space
+        header.setStretchLastSection(False)
+
+        # Set fixed widths for the rest of the columns
+        self._table.setColumnWidth(1, 140)  # Category
+        self._table.setColumnWidth(2, 110)  # Stock
+        self._table.setColumnWidth(3, 80)   # Unit
+        self._table.setColumnWidth(4, 100)  # Threshold
+        self._table.setColumnWidth(5, 140)  # Supplier
+        self._table.setColumnWidth(6, 120)  # Actions (Prevents buttons from getting cut off)
+        
         root.addWidget(self._table)
 
     # ── Data ──────────────────────────────────────────────────────────────────
