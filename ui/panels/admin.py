@@ -73,10 +73,6 @@ class AdminPanel(QWidget):
 
         layout.addLayout(row)
 
-        hint = muted("Default password: admin123")
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(hint)
-
         return w
 
     def _try_login(self):
